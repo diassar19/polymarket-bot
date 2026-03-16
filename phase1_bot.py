@@ -102,6 +102,10 @@ CITY_COORDINATES = {
     "london": (51.51, -0.13), "paris": (48.86, 2.35),
     "tokyo": (35.68, 139.69), "sydney": (-33.87, 151.21),
     "toronto": (43.65, -79.38), "mexico city": (19.43, -99.13),
+    "seoul": (37.57, 126.98),
+    # Polymarket-specific location names
+    "new york's central park": (40.78, -73.97),
+    "central park": (40.78, -73.97),
 }
 
 
@@ -627,10 +631,48 @@ class WeatherModel:
         """Regex patterns to detect weather markets and extract parameters."""
         q = question.lower().strip()
 
-        # --- Temperature bucket: "Will the high temperature in Chicago on March 20 be between 40°F and 50°F?" ---
+        # ---- Polymarket actual format ----
+        # "Will the high temperature in New York's Central Park be 60 degrees F or higher on November 2, 2021?"
+        # "Will the highest temperature in Seoul be between 50°F and 59°F on March 17?"
+        m = re.search(
+            r'(?:will\s+the\s+)?(?:high(?:est)?|max)\s+temp(?:erature)?\s+in\s+(.+?)\s+'
+            r'(?:be\s+)?([-\d.]+)\s*(?:degrees?\s*f?|°\s*f)\s*(?:or\s+)?'
+            r'(higher|lower|or\s+higher|or\s+lower|above|below)\s+'
+            r'(?:on\s+)?(\w+\s+\d{1,2}(?:[\s,]+\d{4})?)',
+            q
+        )
+        if m:
+            city = m.group(1).strip().rstrip("'s")
+            threshold = float(m.group(2))
+            direction_word = m.group(3)
+            date_str = m.group(4)
+            direction = "above" if "higher" in direction_word or "above" in direction_word else "below"
+            target_date = self._parse_date(date_str)
+            if target_date:
+                return WeatherQuery("temp_threshold", city, target_date,
+                                    "temperature_2m_max", threshold=threshold, direction=direction)
+
+        # "Will the highest temperature in CITY be between X°F and Y°F on DATE?"
+        m = re.search(
+            r'(?:will\s+the\s+)?(?:high(?:est)?|max)\s+temp(?:erature)?\s+in\s+(.+?)\s+'
+            r'(?:be\s+)?(?:between|from)\s+([-\d.]+)\s*(?:°\s*f?|degrees?\s*f?)?\s*'
+            r'(?:and|to|-)\s*([-\d.]+)\s*(?:°\s*f?|degrees?\s*f?)?\s+'
+            r'(?:on\s+)?(\w+\s+\d{1,2}(?:[\s,]+\d{4})?)',
+            q
+        )
+        if m:
+            city = m.group(1).strip().rstrip("'s")
+            low, high = float(m.group(2)), float(m.group(3))
+            date_str = m.group(4)
+            target_date = self._parse_date(date_str)
+            if target_date:
+                return WeatherQuery("temp_bucket", city, target_date,
+                                    "temperature_2m_max", bucket_low=low, bucket_high=high)
+
+        # --- High temp bucket: "Will the high temperature in Chicago on March 20 be between 40°F and 50°F?" ---
         m = re.search(
             r'(?:high|max)\s+temp(?:erature)?\s+in\s+(.+?)\s+on\s+'
-            r'(\w+\s+\d{1,2}(?:,?\s*\d{4})?)\s+'
+            r'(\w+\s+\d{1,2}(?:[\s,]+\d{4})?)\s+'
             r'(?:be\s+)?(?:between|from)\s+([-\d.]+)\s*°?\s*[fF]?\s*(?:and|to|-)\s*([-\d.]+)',
             q
         )
@@ -641,9 +683,26 @@ class WeatherModel:
                 return WeatherQuery("temp_bucket", city.strip(), target_date,
                                     "temperature_2m_max", bucket_low=low, bucket_high=high)
 
+        # Low temp bucket
+        m = re.search(
+            r'(?:low(?:est)?|min(?:imum)?)\s+temp(?:erature)?\s+in\s+(.+?)\s+'
+            r'(?:be\s+)?(?:between|from)\s+([-\d.]+)\s*(?:°\s*f?|degrees?\s*f?)?\s*'
+            r'(?:and|to|-)\s*([-\d.]+)\s*(?:°\s*f?|degrees?\s*f?)?\s+'
+            r'(?:on\s+)?(\w+\s+\d{1,2}(?:[\s,]+\d{4})?)',
+            q
+        )
+        if m:
+            city = m.group(1).strip().rstrip("'s")
+            low, high = float(m.group(2)), float(m.group(3))
+            date_str = m.group(4)
+            target_date = self._parse_date(date_str)
+            if target_date:
+                return WeatherQuery("temp_bucket", city, target_date,
+                                    "temperature_2m_min", bucket_low=low, bucket_high=high)
+
         m = re.search(
             r'(?:low|min(?:imum)?)\s+temp(?:erature)?\s+in\s+(.+?)\s+on\s+'
-            r'(\w+\s+\d{1,2}(?:,?\s*\d{4})?)\s+'
+            r'(\w+\s+\d{1,2}(?:[\s,]+\d{4})?)\s+'
             r'(?:be\s+)?(?:between|from)\s+([-\d.]+)\s*°?\s*[fF]?\s*(?:and|to|-)\s*([-\d.]+)',
             q
         )
@@ -657,7 +716,7 @@ class WeatherModel:
         # Generic temp bucket: "temperature in X on DATE between A and B"
         m = re.search(
             r'temp(?:erature)?\s+in\s+(.+?)\s+on\s+'
-            r'(\w+\s+\d{1,2}(?:,?\s*\d{4})?)\s+'
+            r'(\w+\s+\d{1,2}(?:[\s,]+\d{4})?)\s+'
             r'(?:be\s+)?(?:between|from)\s+([-\d.]+)\s*°?\s*[fF]?\s*(?:and|to|-)\s*([-\d.]+)',
             q
         )
@@ -668,10 +727,10 @@ class WeatherModel:
                 return WeatherQuery("temp_bucket", city.strip(), target_date,
                                     "temperature_2m_max", bucket_low=low, bucket_high=high)
 
-        # --- Temperature threshold: "above/below X°F" ---
+        # --- Temperature threshold: "high temp in CITY on DATE above/below X" ---
         m = re.search(
             r'(?:high|max)\s+temp(?:erature)?\s+in\s+(.+?)\s+on\s+'
-            r'(\w+\s+\d{1,2}(?:,?\s*\d{4})?)\s+'
+            r'(\w+\s+\d{1,2}(?:[\s,]+\d{4})?)\s+'
             r'(?:be\s+|reach\s+|exceed\s+|go\s+)?'
             r'(above|below|over|under|at least|at most|exceed)\s*([-\d.]+)',
             q
@@ -689,7 +748,7 @@ class WeatherModel:
 
         m = re.search(
             r'(?:low|min(?:imum)?)\s+temp(?:erature)?\s+in\s+(.+?)\s+on\s+'
-            r'(\w+\s+\d{1,2}(?:,?\s*\d{4})?)\s+'
+            r'(\w+\s+\d{1,2}(?:[\s,]+\d{4})?)\s+'
             r'(?:be\s+|reach\s+|drop\s+)?'
             r'(above|below|over|under|at least|at most)\s*([-\d.]+)',
             q
@@ -709,7 +768,7 @@ class WeatherModel:
         m = re.search(
             r'(?:will\s+it\s+be|will\s+the\s+temperature\s+be)\s+'
             r'(above|below|over|under)\s*([-\d.]+)\s*°?\s*[fF]?\s+in\s+(.+?)\s+on\s+'
-            r'(\w+\s+\d{1,2}(?:,?\s*\d{4})?)',
+            r'(\w+\s+\d{1,2}(?:[\s,]+\d{4})?)',
             q
         )
         if m:
@@ -727,7 +786,7 @@ class WeatherModel:
         m = re.search(
             r'(?:more\s+than|over|at\s+least|exceed)\s+([-\d.]+)\s*(?:inches?|in\.?|mm)\s+'
             r'(?:of\s+)?(?:rain|precipitation|precip|snow)\s+in\s+(.+?)\s+on\s+'
-            r'(\w+\s+\d{1,2}(?:,?\s*\d{4})?)',
+            r'(\w+\s+\d{1,2}(?:[\s,]+\d{4})?)',
             q
         )
         if m:
@@ -739,10 +798,10 @@ class WeatherModel:
                 return WeatherQuery("precip", city, target_date,
                                     "precipitation_sum", threshold=threshold)
 
-        # "Will it rain in CITY on DATE?" (threshold = 0.01 inch)
+        # "Will it rain/snow in CITY on DATE?"
         m = re.search(
             r'will\s+it\s+(?:rain|snow|precipitat)\w*\s+in\s+(.+?)\s+on\s+'
-            r'(\w+\s+\d{1,2}(?:,?\s*\d{4})?)',
+            r'(\w+\s+\d{1,2}(?:[\s,]+\d{4})?)',
             q
         )
         if m:
@@ -750,6 +809,21 @@ class WeatherModel:
             date_str = m.group(2)
             target_date = self._parse_date(date_str)
             if target_date:
+                return WeatherQuery("precip", city, target_date,
+                                    "precipitation_sum", threshold=0.01)
+
+        # "Will it be sunny in CITY at noon on DATE?"
+        m = re.search(
+            r'will\s+it\s+be\s+sunny\s+in\s+(.+?)\s+(?:at\s+\w+\s+)?on\s+'
+            r'(\w+\s+\d{1,2}(?:[\s,]+\d{4})?)',
+            q
+        )
+        if m:
+            city = m.group(1).strip()
+            date_str = m.group(2)
+            target_date = self._parse_date(date_str)
+            if target_date:
+                # Sunny = no precipitation — threshold 0.01 inch, invert
                 return WeatherQuery("precip", city, target_date,
                                     "precipitation_sum", threshold=0.01)
 
@@ -1083,32 +1157,9 @@ class ProbabilityEstimator:
                 f"Reverse arb: YES+NO={price_sum:.3f}, gap={gap:.3f}"
             )
         
-        # Strategy 2: Extreme price mean reversion
-        # Markets priced at extremes (>90¢ or <10¢) tend to have
-        # overconfident pricing. Fade toward the base rate.
-        if market.yes_price > 0.92:
-            # Market very confident YES. Reality is usually less certain.
-            faded_p = MathEngine.bayesian_shrink(market.yes_price, 0.5, 0.15)
-            edge = market.no_price - (1.0 - faded_p)
-            if edge > self.config.min_edge:
-                return (
-                    faded_p,
-                    0.4,  # Low confidence — this is a weak signal
-                    f"Extreme YES fade: market={market.yes_price:.2f}, faded={faded_p:.2f}"
-                )
-        
-        if market.yes_price < 0.08:
-            # Market very confident NO. But tail events happen.
-            faded_p = MathEngine.bayesian_shrink(market.yes_price, 0.5, 0.10)
-            edge = faded_p - market.yes_price
-            if edge > self.config.min_edge:
-                return (
-                    faded_p,
-                    0.3,
-                    f"Extreme NO fade: market={market.yes_price:.2f}, faded={faded_p:.2f}"
-                )
-        
-        # No edge detected by default strategies
+        # No edge detected — extreme fade heuristics disabled
+        # (they generated hundreds of false signals on cheap markets).
+        # Add your own data-driven models here (crypto vol, polling, etc.)
         return None
 
 
