@@ -1,0 +1,22 @@
+services:
+  polybot:
+    build: .
+    container_name: polymarket-bot
+    restart: unless-stopped
+    volumes:
+      - polybot-data:/data
+    environment:
+      # Leave empty for paper trading (no keys needed)
+      - POLYMARKET_PRIVATE_KEY=
+      - POLYMARKET_FUNDER_ADDRESS=
+      - POLYMARKET_BANKROLL=10000
+    # Override default CMD here if you want different settings:
+    # command: ["--loop", "--interval", "120", "--min-edge", "0.05", "--db", "/data/polybot_trades.db"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  polybot-data:
