@@ -2857,14 +2857,13 @@ class PolymarketBot:
             self.log.info(f"Resolved {resolved_count} forecasts this cycle")
 
     def print_report(self):
-        """Print a summary report of all activity."""
+        """Print a summary report of all activity (reads from DB, not memory)."""
         stats = self.db.get_stats()
-        positions = self.paper_trader.get_open_positions()
+        open_trades = self.db.get_open_trades()
 
         print("\n" + "=" * 70)
         print("POLYMARKET BOT — PERFORMANCE REPORT")
         print("=" * 70)
-        print(f"  Bankroll:          ${self.paper_trader.bankroll:,.2f}")
         print(f"  Total Signals:     {stats['total_signals']}")
         print(f"  Approved:          {stats['approved_signals']}")
         print(f"  Trades Taken:      {stats['total_trades']}")
@@ -2874,13 +2873,13 @@ class PolymarketBot:
         print(f"  Win Rate:          {stats['win_rate']:.1%}")
         print()
 
-        if positions:
+        if open_trades:
             print("  OPEN POSITIONS:")
             print("  " + "-" * 66)
-            for p in positions:
+            for t in open_trades:
                 print(
-                    f"  {p.side.value:3s} {p.question[:45]:45s} | "
-                    f"{p.shares:6.1f} @ ${p.entry_price:.2f} = ${p.size_usd:7.2f}"
+                    f"  {t['side']:3s} {t['question'][:45]:45s} | "
+                    f"{t['shares']:6.1f} @ ${t['entry_price']:.2f} = ${t['size_usd']:7.2f}"
                 )
         print("=" * 70)
 
@@ -3156,7 +3155,9 @@ EXAMPLES:
     parser.add_argument("--min-edge", type=float, default=0.05, help="Minimum edge threshold")
     parser.add_argument("--bankroll", type=float, default=10000, help="Starting bankroll")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-    parser.add_argument("--db", type=str, default="polybot_trades.db", help="Database file path")
+    parser.add_argument("--db", type=str,
+                        default=os.getenv("POLYBOT_DB_PATH", "polybot_trades.db"),
+                        help="Database file path")
     
     args = parser.parse_args()
     
