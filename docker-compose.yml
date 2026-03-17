@@ -10,6 +10,8 @@ services:
       - POLYMARKET_PRIVATE_KEY=
       - POLYMARKET_FUNDER_ADDRESS=
       - POLYMARKET_BANKROLL=10000
+      # Sports model — leave empty to skip sports markets
+      - ODDS_API_KEY=
     # Override default CMD here if you want different settings:
     # command: ["--loop", "--interval", "120", "--min-edge", "0.05", "--db", "/data/polybot_trades.db"]
     logging:
