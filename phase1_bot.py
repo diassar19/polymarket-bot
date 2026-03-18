@@ -1269,14 +1269,23 @@ class CryptoModel:
             return None
 
         # Compute time to expiry in years
-        if query.target_date:
-            now = datetime.now(timezone.utc)
-            dt = (query.target_date - now).total_seconds()
+        # Prefer market end_date over parsed question date when available
+        now = datetime.now(timezone.utc)
+        expiry = query.target_date
+        if market.end_date and expiry:
+            # If parsed date is way beyond market end_date, use market end_date
+            if expiry > market.end_date + timedelta(days=7):
+                expiry = market.end_date
+        elif market.end_date and not expiry:
+            expiry = market.end_date
+
+        if expiry:
+            dt = (expiry - now).total_seconds()
             if dt <= 0:
                 return None
             T = dt / (365.25 * 24 * 3600)
         else:
-            # No date specified — default to 30 days
+            # No date at all — default to 30 days
             T = 30.0 / 365.25
 
         # Fetch volatility (blended implied + historical)
@@ -2208,6 +2217,9 @@ class EdgeScanner:
         signals = []
         
         for market in markets:
+            # Filter: skip near-resolved markets (penny markets / near-$1)
+            if market.yes_price < 0.03 or market.yes_price > 0.97:
+                continue
             # Filter: minimum liquidity and volume
             if market.volume_24h < self.config.min_volume_24h:
                 continue
